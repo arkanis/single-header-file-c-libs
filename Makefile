@@ -3,12 +3,15 @@ CC  = gcc
 CFLAGS = -std=c99 -Werror -Wall -Wextra
 
 
-# Tests are created by implicit rules
-TESTS = $(patsubst %.c,%,$(wildcard tests/*test.c))
+# Build and run all tests by default
+TESTS = $(patsubst %.c,%,$(wildcard tests/*_test.c))
 all: $(TESTS)
+	$(foreach test,$(TESTS),$(shell ./$(test)))
 
 # Individula test dependencies, tests are build by implicit rules
 tests/slim_test_crashtest.c: slim_test.h
+tests/math_3d_test: math_3d.h slim_test.h
+tests/math_3d_test: LDLIBS += -lm
 
 
 # Clean all files in the .gitignore list, ensures that the ignore file
