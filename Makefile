@@ -12,6 +12,7 @@ all: $(TESTS)
 tests/slim_test_crashtest.c: slim_test.h
 tests/math_3d_test: math_3d.h slim_test.h
 tests/math_3d_test: LDLIBS += -lm
+tests/slim_hash_test: slim_hash.h slim_test.h
 
 
 # Clean all files in the .gitignore list, ensures that the ignore file

@@ -1,2 +1,3 @@
 tests/slim_test_crashtest
 tests/math_3d_test
+tests/slim_hash_test
