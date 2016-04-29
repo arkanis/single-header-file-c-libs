@@ -1,14 +1,22 @@
+// For strdup()
+#define _GNU_SOURCE
+#include <string.h>
+
 #define SLIM_HASH_IMPLEMENTATION
 #include "../slim_hash.h"
 #define SLIM_TEST_IMPLEMENTATION
 #include "../slim_test.h"
 
 
+SH_GEN_DECL(sh, int64_t, int);
+SH_GEN_HASH_DEF(sh, int64_t, int);
 
+SH_GEN_DECL(dict, const char*, int);
+SH_GEN_DICT_DEF(dict, const char*, int);
 
 
 void test_new_and_destroy() {
-	sh_hash_t hash;
+	sh_t hash;
 	
 	sh_new(&hash);
 	st_check_int(hash.length, 0);
@@ -20,7 +28,7 @@ void test_new_and_destroy() {
 }
 
 void test_put_ptr() {
-	sh_hash_t hash;
+	sh_t hash;
 	sh_new(&hash);
 	
 	int* ptr = sh_put_ptr(&hash, 174);
@@ -33,7 +41,7 @@ void test_put_ptr() {
 }
 
 void test_get_ptr() {
-	sh_hash_t hash;
+	sh_t hash;
 	sh_new(&hash);
 	
 	int* put_ptr = sh_put_ptr(&hash, 174);
@@ -46,7 +54,7 @@ void test_get_ptr() {
 }
 
 void test_get_ptr_not_found() {
-	sh_hash_t hash;
+	sh_t hash;
 	sh_new(&hash);
 	
 	int* get_ptr = sh_get_ptr(&hash, 12345);
@@ -64,7 +72,7 @@ void test_get_ptr_not_found() {
 }
 
 void test_del() {
-	sh_hash_t hash;
+	sh_t hash;
 	sh_new(&hash);
 	
 	int* put_ptr = sh_put_ptr(&hash, 174);
@@ -83,7 +91,7 @@ void test_del() {
 }
 
 void test_get_and_put() {
-	sh_hash_t hash;
+	sh_t hash;
 	sh_new(&hash);
 	
 	sh_put(&hash, 1, 10);
@@ -97,7 +105,7 @@ void test_get_and_put() {
 }
 
 void test_contains() {
-	sh_hash_t hash;
+	sh_t hash;
 	sh_new(&hash);
 	
 	sh_put(&hash, 1, 10);
@@ -111,7 +119,7 @@ void test_contains() {
 }
 
 void test_iteration() {
-	sh_hash_t hash;
+	sh_t hash;
 	sh_new(&hash);
 	
 	// empty hash
@@ -145,7 +153,7 @@ void test_iteration() {
 }
 
 void test_remove_during_iteration() {
-	sh_hash_t hash;
+	sh_t hash;
 	sh_new(&hash);
 	
 	sh_put(&hash, 0, 10);
@@ -165,7 +173,7 @@ void test_remove_during_iteration() {
 }
 
 void test_growing() {
-	sh_hash_t hash;
+	sh_t hash;
 	sh_new(&hash);
 	st_check_int(hash.length, 0);
 	st_check(hash.capacity < 100);
@@ -184,7 +192,7 @@ void test_growing() {
 }
 
 void test_shrinking() {
-	sh_hash_t hash;
+	sh_t hash;
 	sh_new(&hash);
 	st_check(hash.capacity < 100);
 	
@@ -201,7 +209,7 @@ void test_shrinking() {
 }
 
 void test_optimize() {
-	sh_hash_t hash;
+	sh_t hash;
 	sh_new(&hash);
 	
 	for(size_t i = 0; i < 100; i++)
@@ -220,6 +228,45 @@ void test_optimize() {
 	sh_destroy(&hash);
 }
 
+void test_dict() {
+	dict_t dict;
+	dict_new(&dict);
+	
+	dict_put(&dict, "a", 1);
+	st_check_int(dict_contains(&dict, "a"), 1);
+	st_check_int(dict_contains(&dict, "b"), 0);
+	st_check_int(dict_get(&dict, "a", 0), 1);
+	
+	dict_put(&dict, "b", 2);
+	dict_put(&dict, "c", 3);
+	st_check_int(dict_get(&dict, "b", 0), 2);
+	st_check_int(dict_get(&dict, "c", 0), 3);
+	
+	dict_del(&dict, "b");
+	st_check_int(dict_get(&dict, "a", 0), 1);
+	st_check_int(dict_get(&dict, "b", 0), 0);
+	st_check_int(dict_get(&dict, "c", 0), 3);
+	
+	dict_destroy(&dict);
+}
+
+void test_dict_update() {
+	dict_t dict;
+	dict_new(&dict);
+	
+	dict_put(&dict, "x", 7);
+	st_check_int(dict_get(&dict, "x", 0), 7);
+	dict_put(&dict, "x", 1);
+	st_check_int(dict_get(&dict, "x", 0), 1);
+	
+	dict_del(&dict, "x");
+	st_check_int(dict_get(&dict, "x", 0), 0);
+	dict_put(&dict, "x", 3);
+	st_check_int(dict_get(&dict, "x", 0), 3);
+	
+	dict_destroy(&dict);
+}
+
 
 int main() {
 	st_run(test_new_and_destroy);
@@ -234,5 +281,7 @@ int main() {
 	st_run(test_growing);
 	st_run(test_shrinking);
 	st_run(test_optimize);
+	st_run(test_dict);
+	st_run(test_dict_update);
 	return st_show_report();
 }
