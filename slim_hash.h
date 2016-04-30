@@ -197,25 +197,31 @@ SH_GEN_HASH_DEF(con_list, int32_t, void*)
         hashmap->slots = NULL;                   \
     }                                            \
                                                  \
-    value_t* prefix##_put_ptr(prefix##_p hashmap, key_t key) {                                                                                                                          \
-        /* add the +1 to the capacity doubling to avoid beeing stuck on a capacity of 0 */                                                                                              \
-        if (hashmap->length + hashmap->deleted + 1 > hashmap->capacity * 0.5)                                                                                                           \
-            prefix##_resize(hashmap, (hashmap->capacity + 1) * 2);                                                                                                                      \
-                                                                                                                                                                                        \
-        uint32_t hash = (hash_expr) | SH_SLOT_FILLED;                                                                                                                                   \
-        size_t index = hash % hashmap->capacity;                                                                                                                                        \
-        while ( !(hashmap->slots[index].hash_and_flags == hash || hashmap->slots[index].hash_and_flags == SH_SLOT_FREE || hashmap->slots[index].hash_and_flags == SH_SLOT_DELETED) ) {  \
-            index = (index + 1) % hashmap->capacity;                                                                                                                                    \
-        }                                                                                                                                                                               \
-                                                                                                                                                                                        \
-        if (hashmap->slots[index].hash_and_flags == SH_SLOT_DELETED)                                                                                                                    \
-            hashmap->deleted--;                                                                                                                                                         \
-        hashmap->length++;                                                                                                                                                              \
-        hashmap->slots[index].hash_and_flags = hash;                                                                                                                                    \
-        hashmap->slots[index].key = (key_put_expr);                                                                                                                                     \
-        return &hashmap->slots[index].value;                                                                                                                                            \
-    }                                                                                                                                                                                   \
-                                                                                                                                                                                        \
+    value_t* prefix##_put_ptr(prefix##_p hashmap, key_t key) {                                                                          \
+        /* add the +1 to the capacity doubling to avoid beeing stuck on a capacity of 0 */                                              \
+        if (hashmap->length + hashmap->deleted + 1 > hashmap->capacity * 0.5)                                                           \
+            prefix##_resize(hashmap, (hashmap->capacity + 1) * 2);                                                                      \
+                                                                                                                                        \
+        uint32_t hash = (hash_expr) | SH_SLOT_FILLED;                                                                                   \
+        size_t index = hash % hashmap->capacity;                                                                                        \
+        while ( !(hashmap->slots[index].hash_and_flags == SH_SLOT_FREE || hashmap->slots[index].hash_and_flags == SH_SLOT_DELETED) ) {  \
+            if (hashmap->slots[index].hash_and_flags == hash) {                                                                         \
+                key_t a = hashmap->slots[index].key;                                                                                    \
+                key_t b = key;                                                                                                          \
+                if (key_cmp_expr)                                                                                                       \
+                    break;                                                                                                              \
+            }                                                                                                                           \
+            index = (index + 1) % hashmap->capacity;                                                                                    \
+        }                                                                                                                               \
+                                                                                                                                        \
+        if (hashmap->slots[index].hash_and_flags == SH_SLOT_DELETED)                                                                    \
+            hashmap->deleted--;                                                                                                         \
+        hashmap->length++;                                                                                                              \
+        hashmap->slots[index].hash_and_flags = hash;                                                                                    \
+        hashmap->slots[index].key = (key_put_expr);                                                                                     \
+        return &hashmap->slots[index].value;                                                                                            \
+    }                                                                                                                                   \
+                                                                                                                                        \
     value_t* prefix##_get_ptr(prefix##_p hashmap, key_t key) {               \
         uint32_t hash = (hash_expr) | SH_SLOT_FILLED;                        \
         size_t index = hash % hashmap->capacity;                             \
