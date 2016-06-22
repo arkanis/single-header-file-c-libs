@@ -1,7 +1,3 @@
-// For strdup()
-#define _GNU_SOURCE
-#include <string.h>
-
 #define SLIM_HASH_IMPLEMENTATION
 #include "../slim_hash.h"
 #define SLIM_TEST_IMPLEMENTATION
@@ -267,6 +263,55 @@ void test_dict_update() {
 	dict_destroy(&dict);
 }
 
+SH_GEN_DECL(env, char*, int);
+SH_GEN_DICT_DEF(env, char*, int);
+
+void test_example() {
+	env_t env;
+	env_new(&env);
+	
+	env_put(&env, "foo", 3);
+	env_put(&env, "bar", 17);
+	
+	env_get(&env, "foo", -1);  // => 3
+	env_get(&env, "bar", -1);  // => 17
+	env_get(&env, "hurdl", -1);  // => -1
+	
+	st_check_int( env_get(&env, "foo", -1), 3 );
+	st_check_int( env_get(&env, "bar", -1), 17 );
+	st_check_int( env_get(&env, "hurdl", -1), -1 );
+	
+	env_put(&env, "foo", 5);
+	env_get(&env, "foo", -1);  // => 5
+	st_check_int( env_get(&env, "foo", -1), 5 );
+	
+	int* value_ptr = NULL;
+	value_ptr = env_get_ptr(&env, "foo");  // *value_ptr => 5
+	st_check(*value_ptr == 5);
+	value_ptr = env_get_ptr(&env, "hurdl");  // value_ptr => NULL
+	st_check_null(value_ptr);
+	
+	value_ptr = env_put_ptr(&env, "grumpf");  // value_ptr pointer to entry value
+	*value_ptr = 21;
+	env_get(&env, "grumpf", -1);  // => 21
+	st_check_int( env_get(&env, "grumpf", -1), 21 );
+	*value_ptr = 42;
+	env_get(&env, "grumpf", -1);  // => 42
+	st_check_int( env_get(&env, "grumpf", -1), 42 );
+	
+	env_contains(&env, "bar"); // => true
+	st_check_int( env_contains(&env, "bar"), true );
+	env_del(&env, "bar");
+	env_contains(&env, "bar"); // => false
+	st_check_int( env_contains(&env, "bar"), false );
+	
+	for(env_it_p it = env_start(&env); it != NULL; it = env_next(&env, it)) {
+		//printf("%s: %d\n", it->key, it->value);
+	}
+	
+	env_destroy(&env);
+}
+
 
 int main() {
 	st_run(test_new_and_destroy);
@@ -283,5 +328,6 @@ int main() {
 	st_run(test_optimize);
 	st_run(test_dict);
 	st_run(test_dict_update);
+	st_run(test_example);
 	return st_show_report();
 }

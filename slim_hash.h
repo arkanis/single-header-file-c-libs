@@ -1,3 +1,128 @@
+/**
+
+Slim Hash v1.0
+By Stephan Soller <stephan.soller@helionweb.de>
+Licensed under the MIT license
+
+Slim Hash is a simple hash table implementation for C99. It's designed to be
+simple to use and avoid surprises. To keep it typesafe you have to generate code
+for each new hash type you want.
+
+It's an stb style single header file library. Define SLIM_HASH_IMPLEMENTATION
+before you include this file in *one* C file to create the common code that is
+used by all hash tables.
+
+A hash type itself is declared using the SH_GEN_DECL() macro (usually in a
+header file). Then in some C file the implementation is defined using the
+SH_GEN_HASH_DEF(), SH_GEN_DICT_DEF() or SH_GEN_DEF() macro.
+
+
+SIMPLE EXAMPLE USAGE
+
+    #define SLIM_HASH_IMPLEMENTATION
+    #include "slim_hash.h"
+    
+    SH_GEN_DECL(env, char*, int);
+    SH_GEN_DICT_DEF(env, char*, int);
+    
+    void main() {
+        env_t env;
+        env_new(&env);
+        
+        env_put(&env, "foo", 3);
+        env_put(&env, "bar", 17);
+        
+        env_get(&env, "foo", -1);  // => 3
+        env_get(&env, "bar", -1);  // => 17
+        env_get(&env, "hurdl", -1);  // => -1
+        
+        env_put(&env, "foo", 5);
+        env_get(&env, "foo", -1);  // => 5
+        
+        int* value_ptr = NULL;
+        // env_get_ptr() returns ptr to value or NULL if not in hash
+        // Pointer only stays valid as long as the hash isn't manipulated!
+        value_ptr = env_get_ptr(&env, "foo");  // *value_ptr => 5
+        value_ptr = env_get_ptr(&env, "hurdl");  // value_ptr => NULL
+        
+        // env_put_ptr() reserves new slot, returns ptr to value (useful for struct values)
+        // Pointer only stays valid as long as the hash isn't manipulated!
+        value_ptr = env_put_ptr(&env, "grumpf");
+        *value_ptr = 21;
+        env_get(&env, "grumpf", -1);  // => 21
+        *value_ptr = 42;
+        env_get(&env, "grumpf", -1);  // => 42
+        
+        env_contains(&env, "bar"); // => true
+        env_del(&env, "bar");  // => true (true if value was deleted, false if not found)
+        env_contains(&env, "bar"); // => false
+        
+        // This output all slots in undefined order:
+        // foo: 5
+        // grumpf: 42
+        for(env_it_p it = env_start(&env); it != NULL; it = env_next(&env, it)) {
+            printf("%s: %d\n", it->key, it->value);
+            // You can remove a slot during iteration with
+            // env_remove(&env, it);
+        }
+        
+        env_destroy(&env);
+    }
+
+
+THE PUBLIC API
+
+SH_GEN_DECL(prefix, key_t, value_t) generates:
+
+    typedef struct {
+        uint32_t length, capacity;
+        // Some internal fields ...
+    } prefix_t, *prefix_p;
+    
+    typedef struct {
+        // Some internal fields ...
+        key_t key;
+        value_t value;
+    } *prefix_it_p;
+    
+    void     prefix_new(prefix_p hash);
+    void     prefix_destroy(prefix_p hash);
+    void     prefix_optimize(prefix_p hash);
+    
+    void     prefix_put(prefix_p hash, key_t key, value_t value);
+    value_t  prefix_get(prefix_p hash, key_t key, value_t default_value);
+    bool     prefix_del(prefix_p hash, key_t key);
+    bool     prefix_contains(prefix_p hash, key_t key);
+    
+    value_t* prefix_put_ptr(prefix_p hash, key_t key);
+    value_t* prefix_get_ptr(prefix_p hash, key_t key);
+    
+    prefix_it_p prefix_start(prefix_p hash);
+    prefix_it_p prefix_next(prefix_p hash, prefix_it_p it);
+    void        prefix_remove(prefix_p hash, prefix_it_p it);
+
+
+HOW HASHES AND DICTS ARE GENERATED WITH SH_GEN_DEF()
+
+You can use SH_GEN_DEF() to define hashes with more complex keys. As examples
+here the way SH_GEN_HASH_DEF() uses SH_GEN_DEF() to define hashes for value
+types and SH_GEN_DICT_DEF() for zero-terminated strings.
+
+              SH_GEN_HASH_DEF                SH_GEN_DICT_DEF
+prefix        prefix                         prefix
+key_type      key_t                          const char* or char*
+value_type    value_t                        value_t
+hash_expr     sh_murmur3_32(&k, sizeof(k))   sh_murmur3_32(k, strlen(k))
+key_cmp_expr  (a == b)                       strcmp(a, b) == 0
+key_put_expr  k                              sh_strdup(k)
+key_del_expr  0                              (free(k), NULL)
+
+
+VERSION HISTORY
+
+v1.0  2016-06-22  Initial release
+
+**/
 #ifndef SLIM_HASH_HEADER
 #define SLIM_HASH_HEADER
 
@@ -5,55 +130,19 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
+
+
+// Flags to mark slots
+#define SH_SLOT_FREE     0x00000000  // Choosen so a calloc()ed hash is empty
+#define SH_SLOT_DELETED  0x00000001
+#define SH_SLOT_FILLED   0x80000000  // If this bit is set hash_and_flags contains a hash
 
 /**
-
-bool sh_del(hash, key);  // ture if value was found and deleted, false if not found
-
-for(sh_it_p it = sh_start(hash); it != NULL; it = sh_next(it)) {
-    int64_t key = sh_key(it);
-    int value = sh_value(it);
-    sh_remove(it);
-}
-
-int* sh_put_ptr(sh_hash_p hash, int64_t key);  // reserve new slot, returns ptr to value
-int* sh_get_ptr(sh_hash_p hash, int64_t key);  // returns ptr to value or NULL if not in hash
-
-sh_it_p sh_start(sh_hash_p hash);  // iterator
-sh_it_p sh_next(sh_hash_p hash, sh_it_p it);  // it of next set elem
-void    sh_remove(sh_hash_p hash, sh_it_p it);  // removes current elem from hash (during iteration!)
-
-
-**/
-
-/*
-
-prefix      sh_                        dict_
-key_type      int64_t                      const char*
-value_type  int                        void*
-hash_expr    sh_murmur3_32(&k, sizeof(k))  sh_murmur3_32(k, strlen(k))
-key_cmp_expr  (a == b)                    strcmp(a, b) == 0
-key_put_expr  k                          strdup(k)
-key_del_expr  0                          (free(k), NULL)
-
-SH_GEN_DECL(dict, const char*, void*)
-SH_GEN_DEF(dict, const char*, void*, sh_murmur3_32(k, strlen(k)), strcmp(a, b) == 0, strdup(k), (free(k), NULL))
-SH_GEN_DICT_DEF(dict, void*)
-SH_GEN_HASH_DEF(con_list, int32_t, void*)
-
-
-*/
-
-// example hash(int64_t → int)
-
-//
-// Data
-//
-
-#define SH_SLOT_FREE     0x00000000
-#define SH_SLOT_DELETED  0x00000001
-#define SH_SLOT_FILLED   0x80000000
-
+ * This macro declares a hash. It doesn't generate the implementation, just the
+ * types and function prototypes. Use the SH_GEN_HASH_DEF(), SH_GEN_DICT_DEF()
+ * or SH_GEN_DEF() macro to generate the implementation once.
+ */
 #define SH_GEN_DECL(prefix, key_t, value_t)                                     \
     typedef struct {                                                            \
         uint32_t hash_and_flags;                                                \
@@ -83,77 +172,11 @@ SH_GEN_HASH_DEF(con_list, int32_t, void*)
     void           prefix##_remove(prefix##_p hash, prefix##_it_p it);          \
 
 
-
-#endif // SLIM_HASH_HEADER
-
-
-
-#ifdef SLIM_HASH_IMPLEMENTATION
-
+/**
+ * Macro to generate the definitions (implementation) of an hash. You need to
+ * generate the declarations first with SH_GEN_DECL().
+ */
 #define SH_GEN_DEF(prefix, key_t, value_t, hash_expr, key_cmp_expr, key_put_expr, key_del_expr)  \
-    /**                                                                          \
-     * Get 32-bit Murmur3 hash of a memory block. Taken from                     \
-     * https://github.com/wolkykim/qlibc/blob/master/src/utilities/qhash.c       \
-     *                                                                           \
-     * MurmurHash3 was created by Austin Appleby  in 2008. The initial           \
-     * implementation was published in C++ and placed in the public:             \
-     * https://sites.google.com/site/murmurhash/                                 \
-     *                                                                           \
-     * Seungyoung Kim has ported its implementation into C language in 2012 and  \
-     * published it as a part of qLibc component.                                \
-     **/                                                                         \
-    uint32_t prefix##_murmur3_32(const void *data, size_t size) {                \
-        if (data == NULL || size == 0)                                           \
-            return 0;                                                            \
-                                                                                 \
-        const uint32_t c1 = 0xcc9e2d51;                                          \
-        const uint32_t c2 = 0x1b873593;                                          \
-                                                                                 \
-        const int nblocks = size / 4;                                            \
-        const uint32_t *blocks = (const uint32_t *) (data);                      \
-        const uint8_t *tail = (const uint8_t *) (data + (nblocks * 4));          \
-                                                                                 \
-        uint32_t h = 0;                                                          \
-                                                                                 \
-        int i;                                                                   \
-        uint32_t k;                                                              \
-        for (i = 0; i < nblocks; i++) {                                          \
-            k = blocks[i];                                                       \
-                                                                                 \
-            k *= c1;                                                             \
-            k = (k << 15) | (k >> (32 - 15));                                    \
-            k *= c2;                                                             \
-                                                                                 \
-            h ^= k;                                                              \
-            h = (h << 13) | (h >> (32 - 13));                                    \
-            h = (h * 5) + 0xe6546b64;                                            \
-        }                                                                        \
-                                                                                 \
-        k = 0;                                                                   \
-        switch (size & 3) {                                                      \
-            case 3:                                                              \
-                k ^= tail[2] << 16;                                              \
-            case 2:                                                              \
-                k ^= tail[1] << 8;                                               \
-            case 1:                                                              \
-                k ^= tail[0];                                                    \
-                k *= c1;                                                         \
-                k = (k << 15) | (k >> (32 - 15));                                \
-                k *= c2;                                                         \
-                h ^= k;                                                          \
-        };                                                                       \
-                                                                                 \
-        h ^= size;                                                               \
-                                                                                 \
-        h ^= h >> 16;                                                            \
-        h *= 0x85ebca6b;                                                         \
-        h ^= h >> 13;                                                            \
-        h *= 0xc2b2ae35;                                                         \
-        h ^= h >> 16;                                                            \
-                                                                                 \
-        return h;                                                                \
-    }                                                                            \
-                                                                                 \
     bool prefix##_resize(prefix##_p hashmap, uint32_t new_capacity) {                                   \
         /* on filling empty slot: if exceeding load factor, double capacity                             \
         // on deleting slot: if to empty, half capacity                                                 \
@@ -319,10 +342,98 @@ SH_GEN_HASH_DEF(con_list, int32_t, void*)
     }                                                 \
 
 
-#define SH_GEN_HASH_DEF(prefix, key_t, value_t)  \
-             SH_GEN_DEF(prefix, key_t, value_t, prefix##_murmur3_32(&key, sizeof(key)), (a == b), key, 0)
-#define SH_GEN_DICT_DEF(prefix, key_t, value_t)  \
-             SH_GEN_DEF(prefix, key_t, value_t, prefix##_murmur3_32(key, strlen(key)), (strcmp(a, b) == 0), strdup(key), (free((void*)key), NULL))
+//
+// Shorthand macros to define hashes (keys are byte blocks like ints, floats,
+// structs, etc.) and dictionaries (keys are zero-terminated strings).
+//
 
+#define SH_GEN_HASH_DEF(prefix, key_t, value_t)  \
+             SH_GEN_DEF(prefix, key_t, value_t, sh_murmur3_32(&key, sizeof(key)), (a == b), key, 0)
+#define SH_GEN_DICT_DEF(prefix, key_t, value_t)  \
+             SH_GEN_DEF(prefix, key_t, value_t, sh_murmur3_32(key, strlen(key)), (strcmp(a, b) == 0), sh_strdup(key), (free((void*)key), NULL))
+
+#endif // SLIM_HASH_HEADER
+
+
+#ifdef SLIM_HASH_IMPLEMENTATION
+
+/**
+ * Get 32-bit Murmur3 hash of a memory block. Taken from
+ * https://github.com/wolkykim/qlibc/blob/master/src/utilities/qhash.c
+ * 
+ * MurmurHash3 was created by Austin Appleby  in 2008. The initial
+ * implementation was published in C++ and placed in the public:
+ * https://sites.google.com/site/murmurhash/
+ * 
+ * Seungyoung Kim has ported its implementation into C language in 2012 and
+ * published it as a part of qLibc component.
+ **/
+uint32_t sh_murmur3_32(const void *data, size_t size) {
+    if (data == NULL || size == 0)
+        return 0;
+    
+    const uint32_t c1 = 0xcc9e2d51;
+    const uint32_t c2 = 0x1b873593;
+    
+    const int nblocks = size / 4;
+    const uint32_t *blocks = (const uint32_t *) (data);
+    const uint8_t *tail = (const uint8_t *) (data + (nblocks * 4));
+    
+    uint32_t h = 0;
+    
+    int i;
+    uint32_t k;
+    for (i = 0; i < nblocks; i++) {
+        k = blocks[i];
+        
+        k *= c1;
+        k = (k << 15) | (k >> (32 - 15));
+        k *= c2;
+        
+        h ^= k;
+        h = (h << 13) | (h >> (32 - 13));
+        h = (h * 5) + 0xe6546b64;
+    }
+    
+    k = 0;
+    switch (size & 3) {
+        case 3:
+            k ^= tail[2] << 16;
+        case 2:
+            k ^= tail[1] << 8;
+        case 1:
+            k ^= tail[0];
+            k *= c1;
+            k = (k << 15) | (k >> (32 - 15));
+            k *= c2;
+            h ^= k;
+    };
+    
+    h ^= size;
+    
+    h ^= h >> 16;
+    h *= 0x85ebca6b;
+    h ^= h >> 13;
+    h *= 0xc2b2ae35;
+    h ^= h >> 16;
+    
+    return h;
+}
+
+/**
+ * Portable version of strdup that doesn't require feature test macros. But if
+ * got a POSIX strdup use it.
+ */
+#if _SVID_SOURCE || _BSD_SOURCE || _XOPEN_SOURCE >= 500 || _XOPEN_SOURCE && _XOPEN_SOURCE_EXTENDED || _POSIX_C_SOURCE >= 200809L
+#define sh_strdup strdup
+#else
+char *sh_strdup(const char *s) {
+    char *d = malloc(strlen(s) + 1);
+    if (d == NULL)
+        return NULL;
+    strcpy(d, s);
+    return d;
+}
+#endif
 
 #endif // SLIM_HASH_IMPLEMENTATION
