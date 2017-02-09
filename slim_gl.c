@@ -409,6 +409,9 @@ void texture_update(GLuint texture, const void* data) {
 //
 
 GLuint framebuffer_new(GLuint color_buffer_texture) {
+	GLint prev_draw_fb = 0;
+	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw_fb);
+	
 	GLuint framebuffer = 0;
 	glGenFramebuffers(1, &framebuffer);
 	
@@ -417,9 +420,10 @@ GLuint framebuffer_new(GLuint color_buffer_texture) {
 	
 	if ( glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE ) {
 		glDeleteFramebuffers(1, &framebuffer);
-		return 0;
+		framebuffer = 0;
 	}
 	
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prev_draw_fb);
 	return framebuffer;
 }
 
@@ -444,35 +448,14 @@ void framebuffer_blit(GLuint read_framebuffer, GLint rx, GLint ry, GLint rw, GLi
 	glBlitFramebuffer(rx, ry, rx+rw, ry+rh, dx, dy, dx+dw, dy+dh, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 }
 
-void framebuffer_bind(GLuint framebuffer) {
+void framebuffer_bind(GLuint framebuffer, GLsizei width, GLsizei height) {
 	// Check framebuffer binding, and bind the target framebuffer if necessary
 	GLint bound_framebuffer = 0;
 	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &bound_framebuffer);
 	if ((GLuint)bound_framebuffer != framebuffer) {
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer);
-		gl_error("Failed to bind framebuffer %u. glBindFramebuffer()", framebuffer);
-		
-		GLint type = 0;
-		glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &type);
-		if (type == GL_TEXTURE) {
-			GLint color_buffer = 0, old_texture_binding = 0, width = 0, height = 0;
-			glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &color_buffer);
-			
-			GLenum texture_type = GL_TEXTURE_2D;
-			glGetIntegerv(GL_TEXTURE_BINDING_2D, &old_texture_binding);
-			glBindTexture(texture_type, color_buffer);
-			if ( glGetError() == GL_INVALID_OPERATION ) {
-				glGetIntegerv(GL_TEXTURE_BINDING_RECTANGLE, &old_texture_binding);
-				texture_type = GL_TEXTURE_RECTANGLE;
-				glBindTexture(texture_type, color_buffer);
-			}
-			
-			glGetTexLevelParameteriv(texture_type, 0, GL_TEXTURE_WIDTH, &width);
-			glGetTexLevelParameteriv(texture_type, 0, GL_TEXTURE_HEIGHT, &height);
-			glBindTexture(texture_type, old_texture_binding);
-			
+		if ( !gl_error("Failed to bind framebuffer %u. glBindFramebuffer()", framebuffer) && width != 0 && height != 0 )
 			glViewport(0, 0, width, height);
-		}
 	}
 }
 
@@ -592,6 +575,9 @@ int render(GLenum primitive, GLuint program, const char* bindings, ...) {
 	GLenum index_buffer_type = 0;
 	uint32_t indices_to_render = 0;
 	//GLuint use_framebuffer = 0;
+	
+	// Make sure no previous error code messes up our state
+	glGetError();
 	
 	GLuint vertex_array_object = 0;
 	glGetIntegerv(GL_VERTEX_ARRAY_BINDING, (GLint*)&vertex_array_object);

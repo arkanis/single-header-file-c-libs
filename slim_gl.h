@@ -23,7 +23,7 @@ void   texture_update(GLuint texture, const void* data);
 GLuint framebuffer_new(GLuint color_buffer_texture);
 void   framebuffer_destroy(GLuint framebuffer);
 void   framebuffer_blit(GLuint read_framebuffer, GLint rx, GLint ry, GLint rw, GLint rh, GLuint draw_framebuffer, GLint dx, GLint dy, GLint dw, GLint dh);
-void   framebuffer_bind(GLuint framebuffer);
+void   framebuffer_bind(GLuint framebuffer, GLsizei width, GLsizei height);
 
 int    render(GLenum primitive, GLuint program, const char* bindings, ...);
 
