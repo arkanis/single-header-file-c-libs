@@ -290,58 +290,27 @@ void buffer_update(GLuint buffer, const void* data, size_t size, GLenum usage) {
 //
 
 /**
- * Creates a normal 2D texture.
+ * Creates a 2D or rectangular texture (GL_TEXTURE_2D or GL_TEXTURE_RECTANGLE).
  * 
- * The textures minifing filter is set to GL_LINEAR_MIPMAP_LINEAR for better quality (default value
- * is GL_NEAREST_MIPMAP_LINEAR).
- */
-GLuint texture_new(const void* data, size_t width, size_t height, uint8_t components) {
-	GLenum internal_format = 0, data_format = 0;
-	switch(components) {
-		case 1: internal_format = GL_R8;    data_format = GL_RED;  break;
-		case 2: internal_format = GL_RG8;   data_format = GL_RG;   break;
-		case 3: internal_format = GL_RGB8;  data_format = GL_RGB;  break;
-		case 4: internal_format = GL_RGBA8; data_format = GL_RGBA; break;
-		default: return 0;
-	}
-	
-	GLuint texture = 0;
-	glGenTextures(1, &texture);
-	if (texture == 0)
-		return 0;
-	
-	GLsizei mipmap_levels = 1;
-	size_t w = width, h = height;
-	while (w > 1 || h > 1) {
-		mipmap_levels++;
-		w /= 2;
-		h /= 2;
-	}
-	
-	glBindTexture(GL_TEXTURE_2D, texture);
-	glTexStorage2D(GL_TEXTURE_2D, mipmap_levels, internal_format, width, height);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-	if (data) {
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, data_format, GL_UNSIGNED_BYTE, data);
-		glGenerateMipmap(GL_TEXTURE_2D);
-	}
-	glBindTexture(GL_TEXTURE_2D, 0);
-	
-	return texture;
-}
-
-
-/**
- * Creates and uploads a rectangular texture of the specified dimensions and with the specified
- * number of components (1, 2, 3 or 4). If data is NULL the texture will be allocated but no data
- * is uploaded.
+ * Creates and uploads a 2D texture of the specified dimensions and with the specified number of components (1, 2, 3 or
+ * 4). If data is NULL the texture will be allocated but no data is uploaded. If stride is -1 it's assumed to be the
+ * same as width.
  * 
- * To make the API easier this function only supports textures with 8 bits per pixel (GL_R8,
- * GL_RG8, GL_RGB8 and GL_RGBA8).
+ * As default a GL_TEXTURE_2D with mipmaps is created and the minifing filter is set to GL_LINEAR_MIPMAP_LINEAR (better
+ * quality). If data is uploaded the mipmaps are generated as well. You can use the SGL_RECT flag to create a
+ * GL_TEXTURE_RECTANGLE or the SGL_SKIP_MIPMAPS to skip mipmap generation.
+ * 
+ * To make the API easier this function only supports textures with 8 bits per pixel (GL_R8, GL_RG8, GL_RGB8 and
+ * GL_RGBA8).
+ * 
+ * Flags:
+ * 
+ * - SGL_RECT: Create a GL_TEXTURE_RECTANGLE. Rectangle textures don't have mipmaps.
+ * - SGL_SKIP_MIPMAPS: Skip glGenerateMipmap() call after uploading data for a GL_TEXTURE_2D.
  * 
  * Returns the texture object on success or `0` on error.
  */
-GLuint texture_new_rect(const void* data, size_t width, size_t height, uint8_t components) {
+GLuint texture_new(const void* data, uint32_t width, uint32_t height, uint8_t components, ssize_t stride, uint32_t flags) {
 	GLenum internal_format = 0, data_format = 0;
 	switch(components) {
 		case 1: internal_format = GL_R8;    data_format = GL_RED;  break;
@@ -356,11 +325,49 @@ GLuint texture_new_rect(const void* data, size_t width, size_t height, uint8_t c
 	if (texture == 0)
 		return 0;
 	
-	glBindTexture(GL_TEXTURE_RECTANGLE, texture);
-	glTexStorage2D(GL_TEXTURE_RECTANGLE, 1, internal_format, width, height);
-	if (data)
-		glTexSubImage2D(GL_TEXTURE_RECTANGLE, 0, 0, 0, width, height, data_format, GL_UNSIGNED_BYTE, data);
-	glBindTexture(GL_TEXTURE_RECTANGLE, 0);
+	GLenum target = 0;
+	GLsizei mipmap_levels = 1;
+	GLint prev_bound_texture = 0;
+	if (flags & SGL_RECT) {
+		target = GL_TEXTURE_RECTANGLE;
+		glGetIntegerv(GL_TEXTURE_BINDING_RECTANGLE, &prev_bound_texture);
+	} else {
+		target = GL_TEXTURE_2D;
+		glGetIntegerv(GL_TEXTURE_BINDING_2D, &prev_bound_texture);
+		
+		uint32_t w = width, h = height;
+		while (w > 1 || h > 1) {
+			mipmap_levels++;
+			w /= 2;
+			h /= 2;
+		}
+	}
+	
+	glBindTexture(target, texture);
+		glTexStorage2D(target, mipmap_levels, internal_format, width, height);
+		
+		// Set high quality texture filtering as default for 2D (not rect) textures
+		if (target == GL_TEXTURE_2D)
+			glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+		
+		if (data) {
+			if (stride == -1)
+				stride = width;
+			
+			GLint prev_unpack_alignment = 0;
+			glGetIntegerv(GL_UNPACK_ALIGNMENT, &prev_unpack_alignment);
+			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+			glPixelStorei(GL_UNPACK_ROW_LENGTH, stride);
+				
+				glTexSubImage2D(target, 0, 0, 0, width, height, data_format, GL_UNSIGNED_BYTE, data);
+				
+			glPixelStorei(GL_UNPACK_ALIGNMENT, prev_unpack_alignment);
+			glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+			
+			if ( target == GL_TEXTURE_2D && !(flags & SGL_SKIP_MIPMAPS) )
+				glGenerateMipmap(target);
+		}
+	glBindTexture(target, prev_bound_texture);
 	
 	return texture;
 }
@@ -370,37 +377,97 @@ void texture_destroy(GLuint texture) {
 }
 
 /**
- * Uploads new data for the specified texture. The data is expected to be as large as the entire
- * texture and to have the same number of components.
+ * Uploads new data for the specified texture. The data is expected to be as large as the entire texture and to have the
+ * same number of components. If stride is -1 it's assumed to be the textures width without padding.
+ * 
+ * Flags:
+ * 
+ * - SGL_RECT: Texture is a GL_TEXTURE_RECTANGLE.
+ * - SGL_SKIP_MIPMAPS: Skip calling glGenerateMipmap() after upload.
  */
-void texture_update(GLuint texture, const void* data) {
-	GLenum texture_type = GL_TEXTURE_2D;
-	glBindTexture(texture_type, texture);
-	if ( glGetError() == GL_INVALID_OPERATION ) {
-		texture_type = GL_TEXTURE_RECTANGLE;
-		glBindTexture(texture_type, texture);
+void texture_update(GLuint texture, const void* data, ssize_t stride, uint32_t flags) {
+	texture_update_sub(texture, 0, 0, -1, -1, data, stride, flags);
+}
+
+/**
+ * Uploads new data for to a part of a texture. The data is expected to have the same number of components. If w or h is
+ * -1 they are assumed set to the textures width and height. If stride is -1 it's assumed to be the same as w.
+ * 
+ * Flags:
+ * 
+ * - SGL_RECT: Texture is a GL_TEXTURE_RECTANGLE.
+ * - SGL_SKIP_MIPMAPS: Skip calling glGenerateMipmap() after upload.
+ */
+void texture_update_sub(GLuint texture, uint32_t x, uint32_t y, int32_t w, int32_t h, const void* data, ssize_t stride, uint32_t flags) {
+	GLenum target = 0;
+	GLint prev_bound_texture = 0;
+	if (flags & SGL_RECT) {
+		target = GL_TEXTURE_RECTANGLE;
+		glGetIntegerv(GL_TEXTURE_BINDING_RECTANGLE, &prev_bound_texture);
+	} else {
+		target = GL_TEXTURE_2D;
+		glGetIntegerv(GL_TEXTURE_BINDING_2D, &prev_bound_texture);
 	}
 	
-	GLint width = 0, height = 0, internal_format = 0;
-	glGetTexLevelParameteriv(texture_type, 0, GL_TEXTURE_WIDTH, &width);
-	glGetTexLevelParameteriv(texture_type, 0, GL_TEXTURE_HEIGHT, &height);
-	glGetTexLevelParameteriv(texture_type, 0, GL_TEXTURE_INTERNAL_FORMAT, &internal_format);
-	
-	GLenum data_format = 0;
-	switch(internal_format) {
-		case GL_R8:    data_format = GL_RED;  break;
-		case GL_RG8:   data_format = GL_RG;   break;
-		case GL_RGB8:  data_format = GL_RGB;  break;
-		case GL_RGBA8: data_format = GL_RGBA; break;
+	glBindTexture(target, texture);
+		GLint width = w, height = h, internal_format = 0;
+		if (width == -1)
+			glGetTexLevelParameteriv(target, 0, GL_TEXTURE_WIDTH, &width);
+		if (height == -1)
+			glGetTexLevelParameteriv(target, 0, GL_TEXTURE_HEIGHT, &height);
+		if (stride == -1)
+			stride = width;
+		glGetTexLevelParameteriv(target, 0, GL_TEXTURE_INTERNAL_FORMAT, &internal_format);
+		
+		GLenum data_format = 0;
+		switch(internal_format) {
+			case GL_R8:    data_format = GL_RED;  break;
+			case GL_RG8:   data_format = GL_RG;   break;
+			case GL_RGB8:  data_format = GL_RGB;  break;
+			case GL_RGBA8: data_format = GL_RGBA; break;
+		}
+		
+		if (data_format != 0) {
+			GLint prev_unpack_alignment = 0;
+			glGetIntegerv(GL_UNPACK_ALIGNMENT, &prev_unpack_alignment);
+			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+			glPixelStorei(GL_UNPACK_ROW_LENGTH, stride);
+				
+				glTexSubImage2D(target, 0, x, y, width, height, data_format, GL_UNSIGNED_BYTE, data);
+				
+			glPixelStorei(GL_UNPACK_ALIGNMENT, prev_unpack_alignment);
+			glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+			
+			if ( target == GL_TEXTURE_2D && !(flags & SGL_SKIP_MIPMAPS) )
+				glGenerateMipmap(GL_TEXTURE_2D);
+		}
+	glBindTexture(target, prev_bound_texture);
+}
+
+/**
+ * Returns the texutres dimensions in width and height. A width or height of NULL is ignored and safe to use.
+ * 
+ * Flags:
+ * 
+ * - SGL_RECT: Texture is a GL_TEXTURE_RECTANGLE.
+ */
+void texture_dimensions(GLuint texture, int32_t* width, int32_t* height, uint32_t flags) {
+	GLenum target = 0;
+	GLint prev_bound_texture = 0;
+	if (flags & SGL_RECT) {
+		target = GL_TEXTURE_RECTANGLE;
+		glGetIntegerv(GL_TEXTURE_BINDING_RECTANGLE, &prev_bound_texture);
+	} else {
+		target = GL_TEXTURE_2D;
+		glGetIntegerv(GL_TEXTURE_BINDING_2D, &prev_bound_texture);
 	}
 	
-	if (data_format != 0) {
-		glTexSubImage2D(texture_type, 0, 0, 0, width, height, data_format, GL_UNSIGNED_BYTE, data);
-		if (texture_type == GL_TEXTURE_2D)
-			glGenerateMipmap(GL_TEXTURE_2D);
-	}
-	
-	glBindTexture(texture_type, 0);
+	glBindTexture(target, texture);
+		if (width)
+			glGetTexLevelParameteriv(target, 0, GL_TEXTURE_WIDTH, width);
+		if (height)
+			glGetTexLevelParameteriv(target, 0, GL_TEXTURE_HEIGHT, height);
+	glBindTexture(target, prev_bound_texture);
 }
 
 
@@ -408,15 +475,17 @@ void texture_update(GLuint texture, const void* data) {
 // Frame buffer functions
 //
 
-GLuint framebuffer_new(GLuint color_buffer_texture) {
+GLuint framebuffer_new(GLuint color_buffer_texture, uint32_t flags) {
 	GLint prev_draw_fb = 0;
 	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw_fb);
 	
+	GLenum texture_target = (flags & SGL_RECT) ? GL_TEXTURE_RECTANGLE : GL_TEXTURE_2D;
 	GLuint framebuffer = 0;
 	glGenFramebuffers(1, &framebuffer);
 	
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer);
-	glFramebufferTexture(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, color_buffer_texture, 0);
+	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture_target, color_buffer_texture, 0);
+	gl_error("Failed to bind color buffer to framebuffer. glFramebufferTexture2D()");
 	
 	if ( glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE ) {
 		glDeleteFramebuffers(1, &framebuffer);
@@ -521,6 +590,8 @@ static bool parse_attribute_directive(directive_p directive, attribute_info_p at
  * 	
  * 	Modifiers:
  * 		r  texture is a GL_TEXTURE_RECTANGLE texture
+ *  	*  the uniform is a texture array. The argument list must contain a size_t (the array length) and a
+ *  	   GLuint* (pointer to an array of OpenGL texture names) instead of a single GLuint.
  * 
  * 
  * Attributes: lower case types
@@ -536,6 +607,7 @@ static bool parse_attribute_directive(directive_p directive, attribute_info_p at
  * f  GL_FLOAT
  * 	h  GL_HALF_FLOAT
  * 	f  GL_FIXED
+ * 
  * b  GL_BYTE
  * 	u  GL_UNSIGNED_BYTE
  * 	n  normalized
@@ -559,7 +631,6 @@ static bool parse_attribute_directive(directive_p directive, attribute_info_p at
  * 
  * Ideas (not yet implemented):
  * 
- * 	$F  render into that frame buffer
  * 	$E  output error messages into that FILE* stream
  */
 int render(GLenum primitive, GLuint program, const char* bindings, ...) {
@@ -574,7 +645,6 @@ int render(GLenum primitive, GLuint program, const char* bindings, ...) {
 	bool use_index_buffer = false;
 	GLenum index_buffer_type = 0;
 	uint32_t indices_to_render = 0;
-	//GLuint use_framebuffer = 0;
 	
 	// Make sure no previous error code messes up our state
 	glGetError();
@@ -628,10 +698,6 @@ int render(GLenum primitive, GLuint program, const char* bindings, ...) {
 			
 			use_index_buffer = true;
 			continue;
-		//} else if (d.type == 'F' + 256) {
-		//	// User wants to draw into a framebuffer. Consume an argument and use it as framebuffer.
-		//	use_framebuffer = va_arg(args, GLuint);
-		//	continue;
 		} else if (d.type > 256) {
 			// Got an unknown global option
 			fprintf(stderr, "Unknown global option: $%s%c. Ignoring but consuming one argument.\n", d.modifiers, d.type - 256);
@@ -668,7 +734,7 @@ int render(GLenum primitive, GLuint program, const char* bindings, ...) {
 				}
 			}
 			
-			// We e don't know the stride of the attribute we're going to bind. So sum the size of the
+			// We don't know the stride of the attribute we're going to bind. So sum the size of the
 			// current attribute and all further attributes that use this buffer (so all attributes left
 			// or until we encounter a buffer reset ";").
 			// When we know how large one vertex will be in this buffer we know the stride (vertex size)
@@ -681,7 +747,7 @@ int render(GLenum primitive, GLuint program, const char* bindings, ...) {
 				directive_t ld;
 				const char* lookahead_bindings = setup_pass_bindings;
 				while( next_directive(&lookahead_bindings, &ld), ld.type && ld.type != ';' ) {
-					// Skip uniforms and global parameters
+					// Skip global parameters and uniforms
 					if (ld.type > 256 || isupper(ld.type))
 						continue;
 					
@@ -782,27 +848,53 @@ int render(GLenum primitive, GLuint program, const char* bindings, ...) {
 			// we try to reuse the current texture image unit for the next texture.
 			case 'T': {
 				GLenum target = GL_TEXTURE_2D;
+				size_t array_length = -1;
 				
 				for(char* m = d.modifiers; *m != '\0'; m++) {
 					switch(*m) {
 						case 'r': target = GL_TEXTURE_RECTANGLE; break;
+						case '*': array_length = va_arg(args, size_t); break;
 						default: goto invalid_texture_modifier;
 					}
 				}
 				
-				glActiveTexture(GL_TEXTURE0 + active_textures);
-				if ( gl_error("Failed to activate texture image unit %d for texture %s. Probably to many textures. glActiveTexture()", active_textures, d.name) )
-					continue;
-				glBindTexture(target, va_arg(args, GLint));
-				if ( gl_error("Failed to bind texture for %s to %s. glBindTexture()", d.name, (target == GL_TEXTURE_2D) ? "GL_TEXTURE_2D" : "GL_TEXTURE_RECTANGLE") )
-					continue;
-				glUniform1i(location, active_textures);
-				if ( gl_error("Failed to set uniform for texture %s. glUniform1i()", d.name) ) {
-					glBindTexture(target, 0);
-					continue;
-				}
+				if (array_length == (size_t)-1) {
+					// Just one simple texture
+					glActiveTexture(GL_TEXTURE0 + active_textures);
+					if ( gl_error("Failed to activate texture image unit %d for texture %s. Probably to many textures. glActiveTexture()", active_textures, d.name) )
+						continue;
+					glBindTexture(target, va_arg(args, GLint));
+					if ( gl_error("Failed to bind texture for %s to %s. glBindTexture()", d.name, (target == GL_TEXTURE_2D) ? "GL_TEXTURE_2D" : "GL_TEXTURE_RECTANGLE") )
+						continue;
+					glUniform1i(location, active_textures);
+					if ( gl_error("Failed to set uniform for texture %s. glUniform1i()", d.name) ) {
+						glBindTexture(target, 0);
+						continue;
+					}
 				
-				active_textures++;
+					active_textures++;
+				} else {
+					// A texture array (possibly empty but we need to consume the args anyway)
+					GLuint* textures = va_arg(args, GLuint*);
+					GLint image_unit_indices[array_length];
+					for(size_t i = 0; i < array_length; i++) {
+						glActiveTexture(GL_TEXTURE0 + active_textures);
+						if ( gl_error("Failed to activate texture image unit %d for texture array %s. Probably to many textures. glActiveTexture()", active_textures, d.name) )
+							break;
+						image_unit_indices[i] = active_textures;
+						active_textures++;
+						
+						glBindTexture(target, textures[i]);
+						if ( gl_error("Failed to bind texture for %s[%zu] to %s. glBindTexture()", d.name, i, (target == GL_TEXTURE_2D) ? "GL_TEXTURE_2D" : "GL_TEXTURE_RECTANGLE") )
+							continue;
+					}
+					
+					if (array_length > 0) {
+						glUniform1iv(location, array_length, image_unit_indices);
+						if ( gl_error("Failed to set uniform for texture array %s. glUniform1iv()", d.name) )
+							continue;
+					}
+				}
 				continue;
 				
 				}
@@ -811,16 +903,15 @@ int render(GLenum primitive, GLuint program, const char* bindings, ...) {
 			
 			// Attributes
 			default:
-				// Don't process unknown attributes (would just lead to errors) and ignore padding attributes
-				// TODO: Check if this actually skipps padding attributes in the offset calculation
-				if ( location == -1 )
-					continue;
-				
 				if ( parse_attribute_directive(&d, &ai) ) {
 					// Make sure that we count the attributes size in future offsets. So the buffer layout is the
 					// same even if we fail to use some attributes.
 					size_t offset = current_buffer_offset;
 					current_buffer_offset += ai.type_size * ai.components;
+					
+					// Don't process unknown attributes (would just lead to errors) and ignore padding attributes
+					if ( location == -1 )
+						continue;
 					
 					glEnableVertexAttribArray(location);
 					if (gl_error("Failed to enable vertex attribute %s. glEnableVertexAttribArray()", d.name))
@@ -842,15 +933,6 @@ int render(GLenum primitive, GLuint program, const char* bindings, ...) {
 	}
 	va_end(args);
 	
-	/*
-	// Check framebuffer binding, and bind the target framebuffer if necessary
-	GLint bound_framebuffer = 0;
-	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &bound_framebuffer);
-	if ((GLuint)bound_framebuffer != use_framebuffer) {
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, use_framebuffer);
-		// TODO: Figure out how large the frame buffer is and set glViewport accordingly
-	}
-	*/
 	
 	// Draw stuff, start of the fireworks... finally
 	if ( ! use_index_buffer ) {
@@ -1151,6 +1233,7 @@ bool check_required_gl_extentions(){
 void* fload(const char* filename, size_t* size) {
 	long filesize = 0;
 	char* data = NULL;
+	int error = -1;
 	
 	FILE* f = fopen(filename, "rb");
 	if (f == NULL)
@@ -1167,9 +1250,6 @@ void* fload(const char* filename, size_t* size) {
 	if (size)
 		*size = filesize;
 	return (void*)data;
-	
-	
-	int error = -1;
 	
 	free_and_fail:
 		error = errno;

@@ -15,12 +15,16 @@ GLuint buffer_new(const void* data, size_t size);
 void   buffer_destroy(GLuint buffer);
 void   buffer_update(GLuint buffer, const void* data, size_t size, GLenum usage);
 
-GLuint texture_new(const void* data, size_t width, size_t height, uint8_t components);
-GLuint texture_new_rect(const void* data, size_t width, size_t height, uint8_t components);
-void   texture_destroy(GLuint texture);
-void   texture_update(GLuint texture, const void* data);
+#define SGL_RECT          (1 << 0)
+#define SGL_SKIP_MIPMAPS  (1 << 1)
 
-GLuint framebuffer_new(GLuint color_buffer_texture);
+GLuint texture_new(const void* data, uint32_t width, uint32_t height, uint8_t components, ssize_t stride, uint32_t flags);
+void   texture_destroy(GLuint texture);
+void   texture_update(GLuint texture, const void* data, ssize_t stride, uint32_t flags);
+void   texture_update_sub(GLuint texture, uint32_t x, uint32_t y, int32_t w, int32_t h, const void* data, ssize_t stride, uint32_t flags);
+void   texture_dimensions(GLuint texture, int32_t* width, int32_t* height, uint32_t flags);
+
+GLuint framebuffer_new(GLuint color_buffer_texture, uint32_t flags);
 void   framebuffer_destroy(GLuint framebuffer);
 void   framebuffer_blit(GLuint read_framebuffer, GLint rx, GLint ry, GLint rw, GLint rh, GLuint draw_framebuffer, GLint dx, GLint dy, GLint dw, GLint dh);
 void   framebuffer_bind(GLuint framebuffer, GLsizei width, GLsizei height);
@@ -30,3 +34,13 @@ int    render(GLenum primitive, GLuint program, const char* bindings, ...);
 #ifdef _SGL_UTILS
 void* fload(const char* filename, size_t* size);
 #endif
+
+
+/*
+
+Ideas:
+
+- add cube maps
+- SGL_DEPTH, SGL_STENCIL flags for textures -> as backend for FBOs
+
+*/
