@@ -1,0 +1,12 @@
+windows/*.o
+
+*.exe
+triangle
+triangle_legacygl
+image
+image_bubble
+index_buffer
+math
+wireframe
+framebuffer
+cube
