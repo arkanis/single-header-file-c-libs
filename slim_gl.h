@@ -81,6 +81,8 @@ License: MIT License
 // OpenGL program functions
 //
 
+GLuint sgl_program_new(const char* args, ...);
+
 /**
  * Compiles a vertex and fragment shader from two files, links them into an OpenGL program reports compiler errors on failure.
  * 
@@ -655,6 +657,212 @@ static const char* sgl__type_to_string(GLenum type);
 static GLuint sgl__create_and_compile_program(const char* vertex_shader_code, const char* fragment_shader_code, const char* vertex_shader_name, const char* fragment_shader_name, char** compiler_errors);
 static GLuint sgl__create_and_compile_shader(GLenum shader_type, const char* code, const char* filename_for_errors, char** compiler_errors);
 
+
+typedef struct {
+	const char* error_at;
+	const char* error_message;
+	// We need a zero terminated string for glGetAttribLocation() so use a buffer instead of pointer + length into the
+	// argument string.
+	char name[128];
+	char modifiers[16];
+	char type;
+} sgl_arg_t, *sgl_arg_p;
+
+/**
+ * Returns true if a character is a whitespace as defined by the GLSL spec (3.1 Character Set).
+ * That are spaces and the ASCII range containing horizontal tab, new line, vertical tab, form feed and carriage return.
+ * If you look at the ASCII table (man ascii) you'll see that all whitespaces except space are consecutive ASCII codes.
+ * So we cover all these characters with one range check.
+ */
+static inline int sgl__is_whitespace(char c) {
+	return c == ' ' || (c >= '\t' && c <= '\r');
+}
+
+/**
+ * Returns true if a character is valid for an GLSL identifier (spec chapter 3.7 Identifiers) or a minus sign (-).
+ * Names starting with a minus are internal options (e.g. -index or -padding) instead of attribute or uniform names.
+ */
+static inline int sgl__is_name(char c) {
+	return (c >= 'a' && c <= 'z') || c == '_' || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-';
+}
+
+#define SGL__NAMED_ARGS        (1 << 0)
+#define SGL__BUFFER_DIRECTIVES (1 << 1)
+
+static const char* sgl__next_argument(const char* string, int flags, sgl_arg_p arg) {
+	const char* c = string;
+	
+#define EXIT_WITH_ERROR_IF(condition, message) if(condition){ arg->error_at = c; arg->error_message = (message); return NULL; }
+	
+	// A return value of NULL signals the end of arguments or an error. Return NULL when we're called with a NULL string
+	// so we can be called repeatedly at the end. It also makes sure we can dereference the string after this.
+	if (c == NULL)
+		return NULL;
+	
+	// Skip whitespaces
+	while( sgl__is_whitespace(*c) )
+		c++;
+	
+	// Return NULL when we're at the zero terminator to signal the end of arguments
+	if (*c == '\0')
+		return NULL;
+	
+	if (flags & SGL__BUFFER_DIRECTIVES) {
+		if (*c == ';') {
+			// Got a buffer end directive
+			arg->type = *c++;
+			return c;
+		}
+	}
+	
+	if (flags & SGL__NAMED_ARGS) {
+		// Read the name into the name buffer and add the zero-terminator
+		size_t name_len = 0;
+		while ( sgl__is_name(*c) ) {
+			// We can only fill the name buffer up until one byte it left. We need that byte for the zero terminator.
+			EXIT_WITH_ERROR_IF(name_len >= sizeof(arg->name) - 1, "Name is to long");
+			arg->name[name_len++] = *c++;
+		}
+		arg->name[name_len] = '\0';
+		// If the name isn't followed by a whitespace char we either got an invalid char in a name or the zero terminator.
+		// Either way we can't continue.
+		EXIT_WITH_ERROR_IF(!sgl__is_whitespace(*c), "Got invalid character in name");
+		
+		// Skip whitespaces after name
+		while( sgl__is_whitespace(*c) )
+			c++;
+	}
+	
+	EXIT_WITH_ERROR_IF(*c != '%', "Expected at '%' at the start of a directive");
+	c++;
+	
+	// Read all following chars as modifiers (including the last one for now)
+	size_t mod_len = 0;
+	while ( !(sgl__is_whitespace(*c) || *c == '\0') ) {
+		EXIT_WITH_ERROR_IF(mod_len >= sizeof(arg->modifiers), "To many modifiers for directive");
+		arg->modifiers[mod_len++] = *c++;
+	}
+	EXIT_WITH_ERROR_IF(mod_len < 1, "At least one character for the type is necessary after a '%'");
+	
+	// The last char in the modifiers buffer is our type so put it into the type field. Then overwrite the last char
+	// with the zero terminator.
+	arg->type = arg->modifiers[mod_len-1];
+	arg->modifiers[mod_len-1] = '\0';
+	
+	return c;
+	
+#undef EXIT_WITH_ERROR_IF
+}
+
+/*
+static const char* sgl__parse_name(const char* string, sgl_arg_p option) {
+	const char* c = string;
+	if (c == NULL || *c == '\0')
+		return NULL;
+	
+	// Skip whitespaces
+	while( sgl__is_whitespace(*c) )
+		c++;
+	
+	// Read the name into the name buffer and add the zero-terminator
+	size_t offset = 0;
+	while ( sgl__is_name(*c) ) {
+		if (offset >= sizeof(option->name) - 1) {
+			option->error_at = c;
+			option->error_message = "Name is to long";
+			return NULL;
+		}
+		option->name[offset++] = *c++;
+	}
+	option->name[offset] = '\0';
+	
+	// Only return the end position if we actually succeeded in reading a name. That is:
+	// - We read more than 0 characters and
+	// - the current end pos points to a whitespace or zero terminator
+	// Otherwise we're stuck inside or at the start of a name and got an invalid character.
+	if ( offset > 0 && (sgl__is_whitespace(*c) || *c == '\0') )
+		return c;
+	else {
+		option->error_at = c;
+		option->error_message = "Got invalid character in name";
+		return NULL;
+	}
+}
+
+static const char* sgl__parse_directive(const char* string, sgl_arg_p option) {
+	const char* c = string;
+	if (c == NULL)
+		return NULL;
+	
+	// Skip whitespaces
+	while( sgl__is_whitespace(*c) )
+		c++;
+	
+	if (*c == ';') {
+		option->type = *c++;
+		return c;
+	} else if (*c == '%') {
+		c++;
+		// Read all following chars as modifiers (including the last one for now)
+		size_t offset = 0;
+		while ( !(sgl__is_whitespace(*c) || *c == '\0') ) {
+			if (offset >= sizeof(option->modifiers)) {
+				option->error_at = c;
+				option->error_message = "To many modifiers for directive";
+				return NULL;
+			}
+			option->modifiers[offset++] = *c++;
+		}
+		
+		if (offset < 1) {
+			option->error_at = c;
+			option->error_message = "At least one character is necessary after a '%'";
+			return NULL;
+		}
+		
+		// The last char in the modifiers buffer is our type so put it into the type field. Then overwrite the last char
+		// with the zero terminator.
+		option->type = option->modifiers[offset-1];
+		option->modifiers[offset-1] = '\0';
+		
+		return c;
+	} else {
+		option->error_at = c;
+		option->error_message = "Expected '%' at start of directive or a ';' directive";
+		return NULL;
+	}
+}
+*/
+
+
+/*
+GLuint sgl_program_new(const char* args, ...) {
+	directive_t directive;
+	
+	while ( (args = next_directive(args, &directive)) != NULL ) {
+		
+	}
+	
+	char *c = args, *start = NULL, *end = NULL;
+	while(*c != '\0') {
+		switch(*c) {
+			case '%':
+				c++;
+				start = c;
+				while()
+				break;
+			case ' ': case '\f': case '\n':  case '\r': case '\t': case '\v':
+				// Ignore whitespaces
+				break;
+			default:
+				// error: unknown character in args parameter
+				break;
+		}
+		c++;
+	}
+}
+*/
+
 GLuint sgl_program_from_files(const char* vertex_shader_file, const char* fragment_shader_file, char** compiler_errors) {
 	char* vertex_shader_code = sgl_fload(vertex_shader_file, NULL);
 	if (vertex_shader_code == NULL) {
@@ -736,69 +944,69 @@ void sgl_program_inspect(GLuint program) {
  */
 static const char* sgl__type_to_string(GLenum type) {
 	switch(type){
-		case GL_FLOAT: return "float";
-		case GL_FLOAT_VEC2: return "vec2";
-		case GL_FLOAT_VEC3: return "vec3";
-		case GL_FLOAT_VEC4: return "vec4";
-		case GL_INT: return "int";
-		case GL_INT_VEC2: return "ivec2";
-		case GL_INT_VEC3: return "ivec3";
-		case GL_INT_VEC4: return "ivec4";
-		case GL_UNSIGNED_INT: return "unsigned int";
-		case GL_UNSIGNED_INT_VEC2: return "uvec2";
-		case GL_UNSIGNED_INT_VEC3: return "uvec3";
-		case GL_UNSIGNED_INT_VEC4: return "uvec4";
-		case GL_BOOL: return "bool";
-		case GL_BOOL_VEC2: return "bvec2";
-		case GL_BOOL_VEC3: return "bvec3";
-		case GL_BOOL_VEC4: return "bvec4";
-		case GL_FLOAT_MAT2: return "mat2";
-		case GL_FLOAT_MAT3: return "mat3";
-		case GL_FLOAT_MAT4: return "mat4";
-		case GL_FLOAT_MAT2x3: return "mat2x3";
-		case GL_FLOAT_MAT2x4: return "mat2x4";
-		case GL_FLOAT_MAT3x2: return "mat3x2";
-		case GL_FLOAT_MAT3x4: return "mat3x4";
-		case GL_FLOAT_MAT4x2: return "mat4x2";
-		case GL_FLOAT_MAT4x3: return "mat4x3";
-		case GL_SAMPLER_1D: return "sampler1D";
-		case GL_SAMPLER_2D: return "sampler2D";
-		case GL_SAMPLER_3D: return "sampler3D";
-		case GL_SAMPLER_CUBE: return "samplerCube";
-		case GL_SAMPLER_1D_SHADOW: return "sampler1DShadow";
-		case GL_SAMPLER_2D_SHADOW: return "sampler2DShadow";
-		case GL_SAMPLER_1D_ARRAY: return "sampler1DArray";
-		case GL_SAMPLER_2D_ARRAY: return "sampler2DArray";
-		case GL_SAMPLER_1D_ARRAY_SHADOW: return "sampler1DArrayShadow";
-		case GL_SAMPLER_2D_ARRAY_SHADOW: return "sampler2DArrayShadow";
-		case GL_SAMPLER_CUBE_SHADOW: return "samplerCubeShadow";
-		case GL_SAMPLER_BUFFER: return "samplerBuffer";
-		case GL_SAMPLER_2D_RECT: return "sampler2DRect";
-		case GL_SAMPLER_2D_RECT_SHADOW: return "sampler2DRectShadow";
-		case GL_INT_SAMPLER_1D: return "isampler1D";
-		case GL_INT_SAMPLER_2D: return "isampler2D";
-		case GL_INT_SAMPLER_3D: return "isampler3D";
-		case GL_INT_SAMPLER_CUBE: return "isamplerCube";
-		case GL_INT_SAMPLER_1D_ARRAY: return "isampler1DArray";
-		case GL_INT_SAMPLER_2D_ARRAY: return "isampler2DArray";
-		case GL_INT_SAMPLER_BUFFER: return "isamplerBuffer";
-		case GL_INT_SAMPLER_2D_RECT: return "isampler2DRect";
-		case GL_UNSIGNED_INT_SAMPLER_1D: return "usampler1D";
-		case GL_UNSIGNED_INT_SAMPLER_2D: return "usampler2D";
-		case GL_UNSIGNED_INT_SAMPLER_3D: return "usampler3D";
-		case GL_UNSIGNED_INT_SAMPLER_CUBE: return "usamplerCube";
-		case GL_UNSIGNED_INT_SAMPLER_1D_ARRAY: return "usampler2DArray";
-		case GL_UNSIGNED_INT_SAMPLER_2D_ARRAY: return "usampler2DArray";
-		case GL_UNSIGNED_INT_SAMPLER_BUFFER: return "usamplerBuffer";
-		case GL_UNSIGNED_INT_SAMPLER_2D_RECT: return "usampler2DRect";
+		case GL_FLOAT: return "float​";
+		case GL_FLOAT_VEC2: return "vec2​";
+		case GL_FLOAT_VEC3: return "vec3​";
+		case GL_FLOAT_VEC4: return "vec4​";
+		case GL_INT: return "int​";
+		case GL_INT_VEC2: return "ivec2​";
+		case GL_INT_VEC3: return "ivec3​";
+		case GL_INT_VEC4: return "ivec4​";
+		case GL_UNSIGNED_INT: return "unsigned int​";
+		case GL_UNSIGNED_INT_VEC2: return "uvec2​";
+		case GL_UNSIGNED_INT_VEC3: return "uvec3​";
+		case GL_UNSIGNED_INT_VEC4: return "uvec4​";
+		case GL_BOOL: return "bool​";
+		case GL_BOOL_VEC2: return "bvec2​";
+		case GL_BOOL_VEC3: return "bvec3​";
+		case GL_BOOL_VEC4: return "bvec4​";
+		case GL_FLOAT_MAT2: return "mat2​";
+		case GL_FLOAT_MAT3: return "mat3​";
+		case GL_FLOAT_MAT4: return "mat4​";
+		case GL_FLOAT_MAT2x3: return "mat2x3​";
+		case GL_FLOAT_MAT2x4: return "mat2x4​";
+		case GL_FLOAT_MAT3x2: return "mat3x2​";
+		case GL_FLOAT_MAT3x4: return "mat3x4​";
+		case GL_FLOAT_MAT4x2: return "mat4x2​";
+		case GL_FLOAT_MAT4x3: return "mat4x3​";
+		case GL_SAMPLER_1D: return "sampler1D​";
+		case GL_SAMPLER_2D: return "sampler2D​";
+		case GL_SAMPLER_3D: return "sampler3D​";
+		case GL_SAMPLER_CUBE: return "samplerCube​";
+		case GL_SAMPLER_1D_SHADOW: return "sampler1DShadow​";
+		case GL_SAMPLER_2D_SHADOW: return "sampler2DShadow​";
+		case GL_SAMPLER_1D_ARRAY: return "sampler1DArray​";
+		case GL_SAMPLER_2D_ARRAY: return "sampler2DArray​";
+		case GL_SAMPLER_1D_ARRAY_SHADOW: return "sampler1DArrayShadow​";
+		case GL_SAMPLER_2D_ARRAY_SHADOW: return "sampler2DArrayShadow​";
+		case GL_SAMPLER_CUBE_SHADOW: return "samplerCubeShadow​";
+		case GL_SAMPLER_BUFFER: return "samplerBuffer​";
+		case GL_SAMPLER_2D_RECT: return "sampler2DRect​";
+		case GL_SAMPLER_2D_RECT_SHADOW: return "sampler2DRectShadow​";
+		case GL_INT_SAMPLER_1D: return "isampler1D​";
+		case GL_INT_SAMPLER_2D: return "isampler2D​";
+		case GL_INT_SAMPLER_3D: return "isampler3D​";
+		case GL_INT_SAMPLER_CUBE: return "isamplerCube​";
+		case GL_INT_SAMPLER_1D_ARRAY: return "isampler1DArray​";
+		case GL_INT_SAMPLER_2D_ARRAY: return "isampler2DArray​";
+		case GL_INT_SAMPLER_BUFFER: return "isamplerBuffer​";
+		case GL_INT_SAMPLER_2D_RECT: return "isampler2DRect​";
+		case GL_UNSIGNED_INT_SAMPLER_1D: return "usampler1D​";
+		case GL_UNSIGNED_INT_SAMPLER_2D: return "usampler2D​";
+		case GL_UNSIGNED_INT_SAMPLER_3D: return "usampler3D​";
+		case GL_UNSIGNED_INT_SAMPLER_CUBE: return "usamplerCube​";
+		case GL_UNSIGNED_INT_SAMPLER_1D_ARRAY: return "usampler2DArray​";
+		case GL_UNSIGNED_INT_SAMPLER_2D_ARRAY: return "usampler2DArray​";
+		case GL_UNSIGNED_INT_SAMPLER_BUFFER: return "usamplerBuffer​";
+		case GL_UNSIGNED_INT_SAMPLER_2D_RECT: return "usampler2DRect​";
 		
 #		ifdef GL_VERSION_3_2
-			case GL_SAMPLER_2D_MULTISAMPLE: return "sampler2DMS";
-			case GL_SAMPLER_2D_MULTISAMPLE_ARRAY: return "sampler2DMSArray";
-			case GL_INT_SAMPLER_2D_MULTISAMPLE: return "isampler2DMS";
-			case GL_INT_SAMPLER_2D_MULTISAMPLE_ARRAY: return "isampler2DMSArray";
-			case GL_UNSIGNED_INT_SAMPLER_2D_MULTISAMPLE: return "usampler2DMS";
-			case GL_UNSIGNED_INT_SAMPLER_2D_MULTISAMPLE_ARRAY: return "usampler2DMSArray";
+			case GL_SAMPLER_2D_MULTISAMPLE: return "sampler2DMS​";
+			case GL_SAMPLER_2D_MULTISAMPLE_ARRAY: return "sampler2DMSArray​";
+			case GL_INT_SAMPLER_2D_MULTISAMPLE: return "isampler2DMS​";
+			case GL_INT_SAMPLER_2D_MULTISAMPLE_ARRAY: return "isampler2DMSArray​";
+			case GL_UNSIGNED_INT_SAMPLER_2D_MULTISAMPLE: return "usampler2DMS​";
+			case GL_UNSIGNED_INT_SAMPLER_2D_MULTISAMPLE_ARRAY: return "usampler2DMSArray​";
 #		endif
 		
 		default: return "unknown";
