@@ -5,10 +5,10 @@
 
 
 SH_GEN_DECL(sh, int64_t, int);
-SH_GEN_HASH_DEF(sh, int64_t, int);
+SH_GEN_HASH_IMPL(sh, int64_t, int);
 
 SH_GEN_DECL(dict, const char*, int);
-SH_GEN_DICT_DEF(dict, const char*, int);
+SH_GEN_DICT_IMPL(dict, const char*, int);
 
 
 void test_new_and_destroy() {
@@ -263,8 +263,62 @@ void test_dict_update() {
 	dict_destroy(&dict);
 }
 
+// Key expression test, make sure key_put_expr and key_del_expr are called properly
+int ket_put_counter = 0;
+int ket_del_counter = 0;
+
+SH_GEN_DECL(ket_hash, int, int);
+SH_GEN_IMPL(ket_hash, int, int,
+	sh_murmur3(&key, sizeof(key), 0),
+	a == b,
+	(ket_put_counter++, key),
+	(ket_del_counter++, key),
+	calloc(capacity, slot_size),
+	free(ptr)
+);
+
+
+void test_key_del_expr_on_hash_destroy() {
+	ket_hash_t hash;
+	ket_hash_new(&hash);
+	
+	ket_hash_put(&hash, 17, 5);
+	ket_hash_put(&hash, 13, 8);
+	ket_hash_put(&hash, 11, 7);
+	ket_hash_put(&hash, 7, 3);
+	ket_hash_put(&hash, 5, 9);
+	
+	st_check_int( ket_hash_get(&hash, 17, 0), 5 );
+	st_check_int( ket_hash_get(&hash, 13, 0), 8 );
+	st_check_int(ket_put_counter, 5);
+	st_check_int(ket_del_counter, 0);
+	
+	bool was_found = ket_hash_del(&hash, 17);
+	st_check_int(was_found, true);
+	st_check_int(ket_put_counter, 5);
+	st_check_int(ket_del_counter, 1);
+	
+	// Force a downsizing to make sure key_del_expr isn't called then
+	ket_hash_it_p it = ket_hash_start(&hash);
+	ket_hash_remove(&hash, it);
+	it = ket_hash_next(&hash, it);
+	ket_hash_remove(&hash, it);
+	it = ket_hash_next(&hash, it);
+	ket_hash_remove(&hash, it);
+	
+	st_check_int(ket_put_counter, 5);
+	st_check_int(ket_del_counter, 4);
+	
+	ket_hash_destroy(&hash);
+	st_check_int(ket_put_counter, 5);
+	st_check_int(ket_del_counter, 5);
+}
+
+
+
+
 SH_GEN_DECL(env, char*, int);
-SH_GEN_DICT_DEF(env, char*, int);
+SH_GEN_DICT_IMPL(env, char*, int);
 
 void test_example() {
 	env_t env;
@@ -329,5 +383,6 @@ int main() {
 	st_run(test_dict);
 	st_run(test_dict_update);
 	st_run(test_example);
+	st_run(test_key_del_expr_on_hash_destroy);
 	return st_show_report();
 }
