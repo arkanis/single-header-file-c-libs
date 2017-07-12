@@ -204,26 +204,6 @@ void test_shrinking() {
 	sh_destroy(&hash);
 }
 
-void test_optimize() {
-	sh_t hash;
-	sh_new(&hash);
-	
-	for(size_t i = 0; i < 100; i++)
-		sh_put(&hash, i, i*2);
-	st_check(hash.capacity >= 100);
-	
-	for(size_t i = 0; i < 30; i++)
-		sh_del(&hash, i);
-	st_check_int(hash.length, 70);
-	st_check(hash.deleted > 0);
-	
-	sh_optimize(&hash);
-	st_check_int(hash.length, 70);
-	st_check_int(hash.deleted, 0);
-	
-	sh_destroy(&hash);
-}
-
 void test_dict() {
 	dict_t dict;
 	dict_new(&dict);
@@ -379,7 +359,6 @@ int main() {
 	st_run(test_remove_during_iteration);
 	st_run(test_growing);
 	st_run(test_shrinking);
-	st_run(test_optimize);
 	st_run(test_dict);
 	st_run(test_dict_update);
 	st_run(test_example);
