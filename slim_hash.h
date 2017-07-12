@@ -155,7 +155,6 @@ course have different type names and function prefixes.
     
     void  dict_new(struct dict* hashmap);
     void  dict_destroy(struct dict* hashmap);
-    void  dict_optimize(struct dict* hashmap);
     
     int   dict_get(struct dict* hashmap, char* key, int default_value);
     void  dict_put(struct dict* hashmap, char* key, int value);
@@ -176,11 +175,12 @@ See the function implementations in the SH_GEN_IMPL() macro for detailed documen
 VERSION HISTORY
 
 v1.0  2016-06-22  Initial release
-xxxx  xxxx-xx-xx  ADD: Added the fnv1a 32 bit hash function (see sh_fnv1a() documentation).
+v1.1  2017-07-12  ADD: Added the fnv1a 32 bit hash function (see sh_fnv1a() documentation).
                   ADD: Manually ported the murmur3 hash function from the original source. Also
                        added the seed parameter (again, see sh_murmur3() docs).
                   ADD: Added calloc and free expressions to SH_GEN_IMPL() so memory can be allocated
                        from a garbage collector.
+                  CHANGE: Removed the ..._optimize() function because it didn't improve performance.
                   CHANGE: Cleaned up the code and added documentation.
                   CHANGE: The hashmap now uses power to two capacities.
                   CHANGE: Made typedefs optional. They can be removed by defining
@@ -194,11 +194,6 @@ xxxx  xxxx-xx-xx  ADD: Added the fnv1a 32 bit hash function (see sh_fnv1a() docu
                        and definition. IMPL (implementation) makes more clear what the macros
                        generate.
                   FIX: Added missing prototypes for functions shared by all implementations.
-
-
-TODO
-
-- remove optimize function
 
 **/
 #ifndef SLIM_HASH_HEADER
@@ -256,7 +251,6 @@ uint32_t sh_fnv1a(const char* key);
                                                                                                    \
     void     name##_new(struct name* hashmap);                                                     \
     void     name##_destroy(struct name* hashmap);                                                 \
-    void     name##_optimize(struct name* hashmap);                                                \
                                                                                                    \
     value_t  name##_get(struct name* hashmap, key_t key, value_t default_value);                   \
     void     name##_put(struct name* hashmap, key_t key, value_t value);                           \
@@ -682,28 +676,6 @@ uint32_t sh_fnv1a(const char* key);
         }                                                                                          \
                                                                                                    \
         return false;                                                                              \
-    }                                                                                              \
-                                                                                                   \
-    /**                                                                                         */ \
-    /* Rehashes all keys in the hashmap. This is the same as inserting all key-value pairs one  */ \
-    /* after the other into a new hashmap.                                                      */ \
-    /*                                                                                          */ \
-    /* This function is only usfull if you degenerated the hashmap by _a lot_ of inserts and    */ \
-    /* deletions that caused collisions.  If you plan _a lot_ of lookups after that optimizing  */ \
-    /* the hashmap might help performance.                                                      */ \
-    void name##_optimize(struct name* hashmap) {                                                   \
-        uint32_t new_capacity = hashmap->length;                                                   \
-                                                                                                   \
-        /* http://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2 */                  \
-        new_capacity--;                                                                            \
-        new_capacity |= new_capacity >> 1;                                                         \
-        new_capacity |= new_capacity >> 2;                                                         \
-        new_capacity |= new_capacity >> 4;                                                         \
-        new_capacity |= new_capacity >> 8;                                                         \
-        new_capacity |= new_capacity >> 16;                                                        \
-        new_capacity++;                                                                            \
-                                                                                                   \
-        name##_resize(hashmap, new_capacity * 2);                                                  \
     }                                                                                              \
 
 #if _SVID_SOURCE || _BSD_SOURCE || _XOPEN_SOURCE >= 500 || _XOPEN_SOURCE && _XOPEN_SOURCE_EXTENDED || _POSIX_C_SOURCE >= 200809L
