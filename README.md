@@ -9,5 +9,6 @@ All libraries are published under the MIT license.
 library               | lastest version | category  | description
 --------------------- | --------------- | --------- | --------------------------------
 **math_3d.h**         | 1.0             | graphics  | compact 3D math library for use with OpenGL
+**slim_gl.h**         | 1.0             | graphics  | compact OpenGL shorthand functions and printf() style drawcalls
 **slim_hash.h**       | 1.1             | container | simple and easy to use hashmap for C99
 **slim_test.h**       | 1.0             | testing   | small set of functions to build simple test programs
