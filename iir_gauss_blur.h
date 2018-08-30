@@ -2,7 +2,7 @@
 
 IIR Gauss Filter v1.0
 By Stephan Soller <stephan.soller@helionweb.de>
-Based on the paper "Recursive implementaion of the Gaussian filter" by Ian T. Young and Lucas J. van Vliet.
+Based on the paper "Recursive implementation of the Gaussian filter" by Ian T. Young and Lucas J. van Vliet.
 Licensed under the MIT license
 
 QUICK START
@@ -18,62 +18,62 @@ QUICK START
 	iir_gauss_blur(width, height, components, image, sigma);
 	stbi_write_png("foo.blurred.png", width, height, components, image, 0);
 
-This example uses stb_image.h to load the image, then blurrs it and writes the result using stb_image_write.h.
+This example uses stb_image.h to load the image, then blurs it and writes the result using stb_image_write.h.
 `sigma` controls the strength of the blur. Higher values give you a blurrier image.
 
 DOCUMENTATION
 
-This is a single header file library. You'll have to define IIR_GAUSS_BLUR_IMPLEMENTATION before including this
-file to get the implementation. Otherwise just the header will be included.
+This is a single header file library. You'll have to define IIR_GAUSS_BLUR_IMPLEMENTATION before including this file to
+get the implementation. Otherwise just the header will be included.
 
 The library only has a single function: iir_gauss_blur(width, height, components, image, sigma).
 
 - `width` and `height` are the dimensions of the image in pixels.
 - `components` is the number of bytes per pixel. 1 for a grayscale image, 3 for RGB and 4 for RGBA.
   The function can handle an arbitrary number of channels, so 2 or 7 will work as well.
-- `image` is a pointer to the image data with `width * height` pixels, each pixel having `components` bytes
-  (interleaved 8-bit components). There is no padding between the scanlines of the image.
+- `image` is a pointer to the image data with `width * height` pixels, each pixel having `components` bytes (interleaved
+  8-bit components). There is no padding between the scanlines of the image.
   This is the format used by stb_image.h and stb_image_write.h and easy to work with.
 - `sigma` is the strength of the blur. It's a number > 0.5 and most people seem to just eyeball it.
   Start with e.g. a sigma of 5 and go up or down until you have the blurriness you want.
   There are more informed ways to choose this parameter, see CHOOSING SIGMA below.
 
-The function mallocs an internal float buffer with the same dimensions as the image. If that turns out to be
-a bottleneck fell free to move that out of the function. The source code is quite short and straight forward
-(even if the math isn't).
+The function mallocs an internal float buffer with the same dimensions as the image. If that turns out to be a
+bottleneck fell free to move that out of the function. The source code is quite short and straight forward (even if the
+math isn't).
 
-The function is an implementation of the paper "Recursive implementaion of the Gaussian filter" by
-Ian T. Young and Lucas J. van Vliet. It has nothing to do with recursive function calls, instead it's a way to
-construct a filter so that each pixel can change all others no mater the distance between them (infinite impulse
-response, IIR for short). Other (convolution based) gauss filters do that by distributing the value of each pixel
-across all it's neighbors. This takes more and more time with a larger sigma ("blur radius") because the value of
-a pixel has to be propagates across a larger area. This gets quadratically slower with higher radii.
-This IIR based implementation instead gets all the propagation done in just a few passes: A horizontal forward
-and backward pass and a vertical forward and backward pass. The work done is independent of the blur radius
-and so you can have ridiculously large blur radii without any performance impact.
+The function is an implementation of the paper "Recursive implementation of the Gaussian filter" by Ian T. Young and
+Lucas J. van Vliet. It has nothing to do with recursive function calls, instead it's a special way to construct a
+filter. Other (convolution based) gauss filters apply a kernel for each pixel and the kernel grows as sigma gets larger.
+Meaning their performance degrades the more blurry you want your image to be.
+
+Instead The algorithm in the paper gets it done in just a few passes: A horizontal forward and backward pass and a
+vertical forward and backward pass. The work done is independent of the blur radius and so you can have ridiculously
+large blur radii without any performance impact.
 
 CHOOSING SIGMA
 
 There seem to be several rules of thumb out there to get a sigma for a given "blur radius". Usually this is something
 like `radius = 2 * sigma`. So if you want to have a blur radius of 10px you can use `sigma = (1.0 / 2.0) * radius` to
-get the sigma for it (5.0). I'm not sure what that "radius" is suppost to mean though.
+get the sigma for it (5.0). I'm not sure what that "radius" is supposed to mean though.
 
-For my own projects I came up with two different kinds of blur radii and how to get a sigma for them: Given a big
-white area on a black background, how far will the white "bleed out" into the surrounding black? How large is the
-distance until the white (255) gets blurred down to something barely visible (smaller than 16) or even to nothing
-(smaller than 1)? There are to estimates to get the sigma for those radii:
+For my own projects I came up with two different kinds of blur radii and how to get a sigma for them: Given a big white
+area on a black background, how far will the white "bleed out" into the surrounding black? How large is the distance
+until the white (255) gets blurred down to something barely visible (smaller than 16) or even to nothing (smaller than
+1)? There are to estimates to get the sigma for those radii:
 
 	sigma = (1.0 / 1.42) * radius16;
 	sigma = (1.0 / 3.66) * radius1;
 
-Personally I use `radius16` to calculate the sigma when blurring normal images. Think: I want to blur a pixel across
-a circle with the radius x so it's impact is barely visible at the edges.
-When I need to calculate padding I use `radius1`: When I have a black border of 100px around the image I can use
-a `raidus1` of 100 and be reasonable sure that I still got black at the edges. So given a `radius1` blur strength I can
+Personally I use `radius16` to calculate the sigma when blurring normal images. Think: I want to blur a pixel across a
+circle with the radius x so it's impact is barely visible at the edges.
+
+When I need to calculate padding I use `radius1`: When I have a black border of 100px around the image I can use a
+`radius1` of 100 and be reasonable sure that I still got black at the edges. So given a `radius1` blur strength I can
 use it as a padding width as well.
 
-I created thost estimates by applying different sigmas (0.5 to 100) to a test image and measuring the effects with
-GIMP. So take it with a grain of salt (or many). The're reasonable estimates but by no means exact. I tried to solve the
+I created those estimates by applying different sigmas (1 to 100) to a test image and measuring the effects with GIMP.
+So take it with a grain of salt (or many). They're reasonable estimates but by no means exact. I tried to solve the
 normal distribution to calculate the perfect sigma but gave up after a lot of confusion. If you know an exact solution
 let me know. :)
 
