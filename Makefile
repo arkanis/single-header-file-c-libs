@@ -8,7 +8,7 @@ TESTS = $(patsubst %.c,%,$(wildcard tests/*_test.c))
 all: $(TESTS)
 	$(foreach test,$(TESTS),$(shell ./$(test)))
 
-# Individula test dependencies, tests are build by implicit rules
+# Individual test dependencies, tests are build by implicit rules
 tests/slim_test_crashtest.c: slim_test.h
 tests/math_3d_test: math_3d.h slim_test.h
 tests/math_3d_test: LDLIBS += -lm
